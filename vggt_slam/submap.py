@@ -5,7 +5,7 @@ import torch
 import numpy as np
 import scipy
 import open3d as o3d
-from vggt_slam.slam_utils import decompose_camera, extract_frame_id_from_path
+from vggt_slam.slam_utils import decompose_camera, extract_frame_id_from_path, extract_timestamp_info_from_path
 
 class Submap:
     def __init__(self, submap_id):
@@ -23,6 +23,7 @@ class Submap:
         self.voxelized_points = None
         self.last_non_loop_frame_index = None
         self.frame_ids = None
+        self.frame_timestamp_infos = None
         self.is_lc_submap = False
         self.img_names = []
         self.semantic_vectors = []
@@ -139,6 +140,7 @@ class Submap:
         Note: This does not include any of the loop closure frames.
         """
         self.frame_ids = [extract_frame_id_from_path(path) for path in file_paths]
+        self.frame_timestamp_infos = [extract_timestamp_info_from_path(path) for path in file_paths]
 
     def set_last_non_loop_frame_index(self, last_non_loop_frame_index):
         self.last_non_loop_frame_index = last_non_loop_frame_index
@@ -158,6 +160,9 @@ class Submap:
     def get_frame_ids(self):
         # Note this does not include any of the loop closure frames
         return self.frame_ids
+
+    def get_frame_timestamp_infos(self):
+        return self.frame_timestamp_infos
 
     def filter_data_by_confidence(self, data):
         init_conf_mask = self.conf > self.conf_threshold
@@ -179,6 +184,21 @@ class Submap:
             frame_id_list.append(self.frame_ids[index])
             conf_mask = self.conf_masks[index] > self.conf_threshold
             frame_conf_mask.append(conf_mask)
+        return point_list, frame_id_list, frame_conf_mask
+
+    def get_points_list_in_local_frame(self, graph):
+        world_pose_list = self.get_all_poses_world(graph, give_camera_mat=False)
+        world_point_list, _, frame_conf_mask = self.get_points_list_in_world_frame(graph)
+        point_list = []
+        frame_id_list = []
+        for index, points_world in enumerate(world_point_list):
+            points_world_flat = points_world.reshape(-1, 3)
+            points_world_homogeneous = np.hstack([points_world_flat, np.ones((points_world_flat.shape[0], 1))])
+            pose_world = world_pose_list[index]
+            points_local = (np.linalg.inv(pose_world) @ points_world_homogeneous.T).T
+            points_local = (points_local[:, :3] / points_local[:, 3:]).reshape(points_world.shape)
+            point_list.append(points_local)
+            frame_id_list.append(self.frame_ids[index])
         return point_list, frame_id_list, frame_conf_mask
 
     def get_points_in_world_frame(self, graph):

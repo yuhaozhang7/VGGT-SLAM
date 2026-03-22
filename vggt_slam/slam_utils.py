@@ -52,6 +52,10 @@ def parse_image_timestamp(path):
     }
 
 
+def extract_timestamp_info_from_path(path):
+    return parse_image_timestamp(path)
+
+
 def extract_frame_id_from_path(path):
     timestamp_info = parse_image_timestamp(path)
     if timestamp_info is not None:
@@ -62,6 +66,28 @@ def extract_frame_id_from_path(path):
     if match:
         return float(match.group())
     raise ValueError(f"No frame id or timestamp found in image name: {filename}")
+
+
+def split_timestamp_seconds(timestamp):
+    sec = int(np.floor(timestamp))
+    nsec = int(round((timestamp - sec) * 1e9))
+    if nsec >= 1_000_000_000:
+        sec += 1
+        nsec -= 1_000_000_000
+    return sec, nsec
+
+
+def frame_id_to_timestamp_stem(frame_id):
+    sec, nsec = split_timestamp_seconds(float(frame_id))
+    return f"{sec}_{nsec:09d}"
+
+
+def timestamp_info_to_tum_string(timestamp_info):
+    return f"{timestamp_info['sec']}.{timestamp_info['nsec']:09d}"
+
+
+def timestamp_info_to_stem(timestamp_info):
+    return f"{timestamp_info['sec']}_{timestamp_info['nsec']:09d}"
 
 
 def sort_image_paths(image_paths):

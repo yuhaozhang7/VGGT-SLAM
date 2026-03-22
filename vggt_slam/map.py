@@ -5,7 +5,13 @@ import torch
 import open3d as o3d
 from scipy.spatial.transform import Rotation as R
 import matplotlib.pyplot as plt
-from vggt_slam.slam_utils import decompose_camera, cosine_similarity
+from vggt_slam.slam_utils import (
+    decompose_camera,
+    cosine_similarity,
+    frame_id_to_timestamp_stem,
+    timestamp_info_to_stem,
+    timestamp_info_to_tum_string,
+)
 
 class GraphMap:
     def __init__(self):
@@ -144,6 +150,7 @@ class GraphMap:
                 if submap.get_lc_status():
                     continue
                 frame_ids = submap.get_frame_ids()
+                frame_timestamp_infos = submap.get_frame_timestamp_infos()
                 print(frame_ids)
                 for frame_index, frame_id in enumerate(frame_ids):
                     pose = all_poses[count]
@@ -161,8 +168,14 @@ class GraphMap:
                     else:
                         quaternion = R.from_matrix(rotation_matrix).as_quat() # x, y, z, w
                         values = [x, y, z, *quaternion]
+                        timestamp_info = frame_timestamp_infos[frame_index]
+                        timestamp_str = (
+                            timestamp_info_to_tum_string(timestamp_info)
+                            if timestamp_info is not None
+                            else f"{float(frame_id):.9f}"
+                        )
                         f.write(
-                            f"{float(frame_id):.9f} "
+                            f"{timestamp_str} "
                             + " ".join(f"{v:.8f}" for v in values)
                             + "\n"
                         )
@@ -217,7 +230,45 @@ class GraphMap:
             include_loop_closure_submaps=False,
         )
         self.write_poses_to_file(
-            os.path.join(output_dir, "trajectory.txt"),
+            os.path.join(output_dir, "poses_tum.txt"),
             graph,
             kitti_format=False,
         )
+        self.write_local_pointclouds(
+            graph,
+            os.path.join(output_dir, "pts_local"),
+        )
+
+    def write_local_pointclouds(self, graph, output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+        for submap in self.ordered_submaps_by_key():
+            if submap.get_lc_status():
+                continue
+
+            pointclouds, frame_ids, conf_masks = submap.get_points_list_in_local_frame(graph)
+            frame_timestamp_infos = submap.get_frame_timestamp_infos()
+            for frame_id, timestamp_info, pointcloud, conf_mask, colors in zip(
+                frame_ids,
+                frame_timestamp_infos,
+                pointclouds,
+                conf_masks,
+                submap.colors,
+            ):
+                points = pointcloud[conf_mask]
+                point_colors = colors[conf_mask]
+                if points.size == 0:
+                    continue
+                if point_colors.max() > 1.0:
+                    point_colors = point_colors / 255.0
+
+                pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
+                pcd.colors = o3d.utility.Vector3dVector(point_colors)
+                file_stem = (
+                    timestamp_info_to_stem(timestamp_info)
+                    if timestamp_info is not None
+                    else frame_id_to_timestamp_stem(frame_id)
+                )
+                o3d.io.write_point_cloud(
+                    os.path.join(output_dir, f"{file_stem}.pcd"),
+                    pcd,
+                )
