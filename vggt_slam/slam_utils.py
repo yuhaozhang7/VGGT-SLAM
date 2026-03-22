@@ -8,6 +8,11 @@ from PIL import Image
 from torchvision import transforms as TF
 import torch
 
+TIMESTAMPED_IMAGE_PATTERN = re.compile(
+    r"^image_(?P<sec>\d+)_(?P<nsec>\d+)\.[^.]+$",
+    re.IGNORECASE,
+)
+
 
 def slice_with_overlap(lst, n, k):
     if n <= 0 or k < 0:
@@ -28,6 +33,46 @@ def sort_images_by_number(image_paths):
         return float(match.group()) if match else float('inf')
 
     return sorted(image_paths, key=extract_number)
+
+
+def parse_image_timestamp(path):
+    filename = os.path.basename(path)
+    match = TIMESTAMPED_IMAGE_PATTERN.match(filename)
+    if not match:
+        return None
+
+    sec = int(match.group("sec"))
+    nsec_raw = match.group("nsec")
+    nsec = int(nsec_raw)
+    timestamp = sec + nsec * 1e-9
+    return {
+        "sec": sec,
+        "nsec": nsec,
+        "timestamp": timestamp,
+    }
+
+
+def extract_frame_id_from_path(path):
+    timestamp_info = parse_image_timestamp(path)
+    if timestamp_info is not None:
+        return timestamp_info["timestamp"]
+
+    filename = os.path.basename(path)
+    match = re.search(r'\d+(?:\.\d+)?', filename)
+    if match:
+        return float(match.group())
+    raise ValueError(f"No frame id or timestamp found in image name: {filename}")
+
+
+def sort_image_paths(image_paths):
+    def sort_key(path):
+        timestamp_info = parse_image_timestamp(path)
+        if timestamp_info is not None:
+            return (0, timestamp_info["sec"], timestamp_info["nsec"], os.path.basename(path))
+        frame_id = extract_frame_id_from_path(path)
+        return (1, frame_id, 0, os.path.basename(path))
+
+    return sorted(image_paths, key=sort_key)
 
 def downsample_images(image_names, downsample_factor):
     """

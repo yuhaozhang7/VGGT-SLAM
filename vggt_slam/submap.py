@@ -5,7 +5,7 @@ import torch
 import numpy as np
 import scipy
 import open3d as o3d
-from vggt_slam.slam_utils import decompose_camera
+from vggt_slam.slam_utils import decompose_camera, extract_frame_id_from_path
 
 class Submap:
     def __init__(self, submap_id):
@@ -138,15 +138,7 @@ class Submap:
 
         Note: This does not include any of the loop closure frames.
         """
-        frame_ids = []
-        for path in file_paths:
-            filename = os.path.basename(path)
-            match = re.search(r'\d+(?:\.\d+)?', filename)  # matches integers and decimals
-            if match:
-                frame_ids.append(float(match.group()))
-            else:
-                raise ValueError(f"No number found in image name: {filename}")
-        self.frame_ids = frame_ids
+        self.frame_ids = [extract_frame_id_from_path(path) for path in file_paths]
 
     def set_last_non_loop_frame_index(self, last_non_loop_frame_index):
         self.last_non_loop_frame_index = last_non_loop_frame_index

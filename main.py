@@ -25,6 +25,7 @@ parser.add_argument("--vis_flow", action="store_true", help="Visualize optical f
 parser.add_argument("--log_results", action="store_true", help="save txt file with results")
 parser.add_argument("--skip_dense_log", action="store_true", help="by default, logging poses and logs dense point clouds. If this flag is set, dense logging is skipped")
 parser.add_argument("--log_path", type=str, default="poses.txt", help="Path to save the log file")
+parser.add_argument("--output_dir", type=str, default=None, help="Optional directory to save the final optimized world-frame point cloud and TUM poses")
 parser.add_argument("--submap_size", type=int, default=16, help="Number of new frames per submap, does not include overlapping frames or loop closure frames")
 parser.add_argument("--overlapping_window_size", type=int, default=1, help="ONLY DEFAULT OF 1 SUPPORTED RIGHT NOW. Number of overlapping frames, which are used in SL(4) estimation")
 parser.add_argument("--max_loops", type=int, default=1, help="ONLY DEFAULT OF 1 SUPPORTED RIGHT NOW or 0 to disable loop closures.")
@@ -83,7 +84,7 @@ def main():
                if "depth" not in os.path.basename(f).lower() and "txt" not in os.path.basename(f).lower() 
                and "db" not in os.path.basename(f).lower()]
 
-    image_names = utils.sort_images_by_number(image_names)
+    image_names = utils.sort_image_paths(image_names)
     downsample_factor = 1
     image_names = utils.downsample_images(image_names, downsample_factor)
     print(f"Found {len(image_names)} images")
@@ -205,6 +206,9 @@ def main():
         if not args.skip_dense_log:
             # Log the dense point cloud for each submap.
             solver.map.save_framewise_pointclouds(solver.graph, args.log_path.replace(".txt", "_logs"))
+
+    if args.output_dir:
+        solver.map.write_global_outputs(solver.graph, args.output_dir)
 
 
 if __name__ == "__main__":

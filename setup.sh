@@ -14,6 +14,10 @@ git clone https://github.com/Dominic101/salad.git
 pip install -e ./salad
 cd ..
 
+# Download DINOv2 SALAD checkpoint used for loop closure
+echo "Downloading DINOv2 SALAD checkpoint..."
+python3 -c "import os, torch; url='https://github.com/serizba/salad/releases/download/v1.0.0/dino_salad.ckpt'; ckpt_dir=os.path.join(torch.hub.get_dir(), 'checkpoints'); os.makedirs(ckpt_dir, exist_ok=True); torch.hub.load_state_dict_from_url(url, model_dir=ckpt_dir, map_location='cpu', file_name='dino_salad.ckpt')"
+
 # 3. Clone and install our fork of VGGT
 echo "Cloning and installing VGGT..."
 cd third_party

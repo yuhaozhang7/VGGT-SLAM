@@ -1,4 +1,5 @@
 import os
+import shutil
 import numpy as np
 import torch
 import open3d as o3d
@@ -156,10 +157,15 @@ class GraphMap:
                         pose_matrix[:3, 3] = t
                         output = pose_matrix.flatten()[:-4]
                         output = np.array([float(frame_id), *output])
+                        f.write(" ".join(f"{v:.8f}" for v in output) + "\n")
                     else:
                         quaternion = R.from_matrix(rotation_matrix).as_quat() # x, y, z, w
-                        output = np.array([float(frame_id), x, y, z, *quaternion])
-                    f.write(" ".join(f"{v:.8f}" for v in output) + "\n")
+                        values = [x, y, z, *quaternion]
+                        f.write(
+                            f"{float(frame_id):.9f} "
+                            + " ".join(f"{v:.8f}" for v in values)
+                            + "\n"
+                        )
 
     def save_framewise_pointclouds(self, graph, file_name):
         os.makedirs(file_name, exist_ok=True)
@@ -175,14 +181,18 @@ class GraphMap:
         assert count == len(self.rectifying_H_mats), "Number of rectifying mats and number of point maps do not match"
                 
 
-    def write_points_to_file(self, graph, file_name):
+    def write_points_to_file(self, graph, file_name, include_loop_closure_submaps=True):
         pcd_all = []
         colors_all = []
         for submap in self.ordered_submaps_by_key():
+            if not include_loop_closure_submaps and submap.get_lc_status():
+                continue
             pcd = submap.get_points_in_world_frame(graph)
             pcd = pcd.reshape(-1, 3)
             pcd_all.append(pcd)
             colors_all.append(submap.get_points_colors())
+        if not pcd_all:
+            raise ValueError("No point clouds available to export.")
         pcd_all = np.concatenate(pcd_all, axis=0)
         colors_all = np.concatenate(colors_all, axis=0)
         if colors_all.max() > 1.0:
@@ -190,3 +200,24 @@ class GraphMap:
         pcd_all = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(pcd_all))
         pcd_all.colors = o3d.utility.Vector3dVector(colors_all)
         o3d.io.write_point_cloud(file_name, pcd_all)
+
+    def write_global_outputs(self, graph, output_dir):
+        if os.path.isdir(output_dir):
+            for entry in os.listdir(output_dir):
+                entry_path = os.path.join(output_dir, entry)
+                if os.path.isdir(entry_path):
+                    shutil.rmtree(entry_path)
+                else:
+                    os.remove(entry_path)
+        else:
+            os.makedirs(output_dir, exist_ok=True)
+        self.write_points_to_file(
+            graph,
+            os.path.join(output_dir, "pts_global.pcd"),
+            include_loop_closure_submaps=False,
+        )
+        self.write_poses_to_file(
+            os.path.join(output_dir, "trajectory.txt"),
+            graph,
+            kitti_format=False,
+        )

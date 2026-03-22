@@ -10,6 +10,7 @@ import os
 from salad.eval import load_model # load salad
 
 device = 'cuda'
+SALAD_CKPT_URL = "https://github.com/serizba/salad/releases/download/v1.0.0/dino_salad.ckpt"
 
 tensor_transform = T.ToPILImage()
 denormalize = T.Normalize(mean=[-1, -1, -1], std=[2, 2, 2])
@@ -51,8 +52,15 @@ class LoopMatchQueue:
 
 class ImageRetrieval:
     def __init__(self, input_size=224):
-
         ckpt_pth = os.path.join(torch.hub.get_dir(), "checkpoints/dino_salad.ckpt")
+        if not os.path.isfile(ckpt_pth):
+            print(f"SALAD checkpoint not found at {ckpt_pth}. Downloading from {SALAD_CKPT_URL}...")
+            torch.hub.load_state_dict_from_url(
+                SALAD_CKPT_URL,
+                model_dir=os.path.dirname(ckpt_pth),
+                map_location=torch.device("cpu"),
+                file_name=os.path.basename(ckpt_pth),
+            )
         self.model = load_model(ckpt_pth)
         self.model.eval()
         self.transform = input_transform((input_size, input_size))

@@ -173,3 +173,5 @@ dmypy.json
 **/tmp/
 **/outputs/skyseg.onnx
 skyseg.onnx
+
+outputs/
