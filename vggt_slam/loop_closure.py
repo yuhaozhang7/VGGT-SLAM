@@ -64,18 +64,30 @@ class ImageRetrieval:
         self.model = load_model(ckpt_pth)
         self.model.eval()
         self.transform = input_transform((input_size, input_size))
+        if device == "cuda" and torch.cuda.is_available():
+            self.autocast_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        else:
+            self.autocast_dtype = None
 
     def get_single_embeding(self, cv_img):
         with torch.no_grad():
             pil_img = self.transform(tensor_transform(cv_img))
-            return self.model(pil_img.to(device))
+            model_input = pil_img.to(device)
+            if self.autocast_dtype is None:
+                return self.model(model_input)
+            with torch.autocast(device_type="cuda", dtype=self.autocast_dtype):
+                return self.model(model_input)
 
     def get_batch_descriptors(self, imgs):
         # Expecting imgs to be a batch of images (B, C, H, W)
         with torch.no_grad():
             pil_imgs = [tensor_transform(img) for img in imgs]  # Convert each tensor to PIL Image
             imgs = torch.stack([self.transform(img) for img in pil_imgs])  # Apply transform and stack
-            return self.model(imgs.to(device))
+            model_input = imgs.to(device)
+            if self.autocast_dtype is None:
+                return self.model(model_input)
+            with torch.autocast(device_type="cuda", dtype=self.autocast_dtype):
+                return self.model(model_input)
     
     def get_all_submap_embeddings(self, submap):
         # Frames is np array of shape (S, 3, H, W)

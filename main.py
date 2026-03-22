@@ -11,9 +11,9 @@ import cv2
 import matplotlib.pyplot as plt
 
 import vggt_slam.slam_utils as utils
+from vggt_slam.model_wrapper import DepthAnything3OnlyWrapper
 from vggt_slam.solver import Solver
 from vggt_slam.submap import Submap
-
 from vggt.models.vggt import VGGT
 
 parser = argparse.ArgumentParser(description="VGGT-SLAM demo")
@@ -26,6 +26,7 @@ parser.add_argument("--log_results", action="store_true", help="save txt file wi
 parser.add_argument("--skip_dense_log", action="store_true", help="by default, logging poses and logs dense point clouds. If this flag is set, dense logging is skipped")
 parser.add_argument("--log_path", type=str, default="poses.txt", help="Path to save the log file")
 parser.add_argument("--output_dir", type=str, default=None, help="Optional directory to save the final optimized world-frame point cloud and TUM poses")
+parser.add_argument("--da", action="store_true", help="Use Depth Anything 3 only for prediction and skip VGGT-based loop-closure validation")
 parser.add_argument("--submap_size", type=int, default=16, help="Number of new frames per submap, does not include overlapping frames or loop closure frames")
 parser.add_argument("--overlapping_window_size", type=int, default=1, help="ONLY DEFAULT OF 1 SUPPORTED RIGHT NOW. Number of overlapping frames, which are used in SL(4) estimation")
 parser.add_argument("--max_loops", type=int, default=1, help="ONLY DEFAULT OF 1 SUPPORTED RIGHT NOW or 0 to disable loop closures.")
@@ -70,13 +71,15 @@ def main():
         clip_model, clip_preprocess = None, None
         clip_tokenizer = None
 
-    model = VGGT()
-    _URL = "https://huggingface.co/facebook/VGGT-1B/resolve/main/model.pt"
-    model.load_state_dict(torch.hub.load_state_dict_from_url(_URL))
-
-    model.eval()
-    model = model.to(torch.bfloat16)  # use half precision
-    model = model.to(device)
+    if args.da:
+        model = DepthAnything3OnlyWrapper(device=device)
+    else:
+        model = VGGT()
+        _URL = "https://huggingface.co/facebook/VGGT-1B/resolve/main/model.pt"
+        model.load_state_dict(torch.hub.load_state_dict_from_url(_URL))
+        model.eval()
+        model = model.to(torch.bfloat16)
+        model = model.to(device)
 
     # Use the provided image folder path
     print(f"Loading images from {args.image_folder}...")

@@ -297,11 +297,20 @@ class Solver:
 
     def run_predictions(self, image_names, model, max_loops, clip_model, clip_preprocess):
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        t1 = time.time()
-        with self.vggt_timer:
-            images = load_and_preprocess_images(image_names).to(device)
-        print(f"Loaded and preprocessed {len(image_names)} images in {time.time() - t1:.2f} seconds")
-        print(f"Preprocessed images shape: {images.shape}")
+        use_da3_only = getattr(model, "uses_da3_only", False)
+        if use_da3_only:
+            t1 = time.time()
+            with self.vggt_timer:
+                predictions = model.predict_from_paths(image_names)
+            images = predictions["images"].to(device)
+            print(f"Loaded and preprocessed {len(image_names)} images with DA3 in {time.time() - t1:.2f} seconds")
+            print(f"Preprocessed images shape: {images.shape}")
+        else:
+            t1 = time.time()
+            with self.vggt_timer:
+                images = load_and_preprocess_images(image_names).to(device)
+            print(f"Loaded and preprocessed {len(image_names)} images in {time.time() - t1:.2f} seconds")
+            print(f"Preprocessed images shape: {images.shape}")
 
         # print("Running inference...")
         dtype = torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
@@ -329,11 +338,12 @@ class Solver:
         self.current_working_submap = new_submap
         print(f"Created new submap in {time.time() - t1:.2f} seconds")
 
-        with torch.no_grad():
-            t1 = time.time()
-            with self.vggt_timer:
-                predictions = model(images)
-            print(f"VGGT model inference took {time.time() - t1:.2f} seconds")
+        if not use_da3_only:
+            with torch.no_grad():
+                t1 = time.time()
+                with self.vggt_timer:
+                    predictions = model(images)
+                print(f"Model inference took {time.time() - t1:.2f} seconds")
 
         # Check for loop closures and add retrieval vectors from new submap to the database
         predictions_lc = None
@@ -343,11 +353,16 @@ class Solver:
         if len(detected_loops) > 0:
             print(colored("detected_loops", "yellow"), detected_loops)
             retrieved_frames = self.map.get_frames_from_loops(detected_loops)
+            loop_closure_frame_names = [
+                new_submap.get_img_names_at_index(detected_loops[0].query_submap_frame),
+                self.map.get_submap(detected_loops[0].detected_submap_id).get_img_names_at_index(detected_loops[0].detected_submap_frame),
+            ]
             with torch.no_grad():
                 lc_frames = torch.stack((new_submap.get_frame_at_index(detected_loops[0].query_submap_frame), retrieved_frames[0]), axis=0)
-                predictions_lc = model(lc_frames, compute_similarity=True)
-                loop_closure_frame_names = [new_submap.get_img_names_at_index(detected_loops[0].query_submap_frame), 
-                self.map.get_submap(detected_loops[0].detected_submap_id).get_img_names_at_index(detected_loops[0].detected_submap_frame)]
+                if use_da3_only:
+                    predictions_lc = model.predict_from_paths(loop_closure_frame_names)
+                else:
+                    predictions_lc = model(lc_frames, compute_similarity=True)
 
             # Visualize loop closure frames
             if DEBUG:
@@ -360,32 +375,44 @@ class Solver:
                 plt.title("Loop Closure Frames. Left: Query Frame, Right: Retrieved Frame")
                 plt.show()
 
-        print("Converting pose encoding to extrinsic and intrinsic matrices...")
-        extrinsic, intrinsic = pose_encoding_to_extri_intri(predictions["pose_enc"], images.shape[-2:])
-        predictions["extrinsic"] = extrinsic
-        predictions["intrinsic"] = intrinsic
+        if use_da3_only:
+            print("Using DA3 extrinsics/intrinsics directly.")
+        else:
+            print("Converting pose encoding to extrinsic and intrinsic matrices...")
+            extrinsic, intrinsic = pose_encoding_to_extri_intri(predictions["pose_enc"], images.shape[-2:])
+            predictions["extrinsic"] = extrinsic
+            predictions["intrinsic"] = intrinsic
 
         predictions["detected_loops"] = detected_loops
         
         if predictions_lc is not None:
-            image_match_ratio = predictions_lc["image_match_ratio"]
-            if image_match_ratio < 0.85:
-                print(colored("Loop closure image match ratio too low, skipping loop closure", "red"))
-                predictions_lc = None # We set to None to ignore the loop closure
-                predictions["detected_loops"] = []
-            else:
+            if not use_da3_only:
+                image_match_ratio = predictions_lc["image_match_ratio"]
+                if image_match_ratio < 0.85:
+                    print(colored("Loop closure image match ratio too low, skipping loop closure", "red"))
+                    predictions_lc = None # We set to None to ignore the loop closure
+                    predictions["detected_loops"] = []
+
+            if predictions_lc is not None:
                 self.graph.increment_loop_closure()
-                extrinsic_lc, intrinsic_lc = pose_encoding_to_extri_intri(predictions_lc["pose_enc"], retrieved_frames[0].shape[-2:])
-                predictions["extrinsic_lc"] = extrinsic_lc
-                predictions["intrinsic_lc"] = intrinsic_lc
+                if use_da3_only:
+                    predictions["extrinsic_lc"] = predictions_lc["extrinsic"]
+                    predictions["intrinsic_lc"] = predictions_lc["intrinsic"]
+                else:
+                    extrinsic_lc, intrinsic_lc = pose_encoding_to_extri_intri(predictions_lc["pose_enc"], retrieved_frames[0].shape[-2:])
+                    predictions["extrinsic_lc"] = extrinsic_lc
+                    predictions["intrinsic_lc"] = intrinsic_lc
                 predictions["depth_lc"] = predictions_lc["depth"]
                 predictions["depth_conf_lc"] = predictions_lc["depth_conf"]
 
-            
+        
         for key in predictions.keys():
             if isinstance(predictions[key], torch.Tensor) and key != "target_tokens":
-                predictions[key] = predictions[key].float().cpu().numpy().squeeze(0)  # remove batch dimension and convert to numpy
-    
+                value = predictions[key].float().cpu().numpy()
+                if value.shape[0] == 1:
+                    value = value.squeeze(0)
+                predictions[key] = value
+
         if predictions_lc is not None:
             predictions["frames_lc"] = lc_frames[0:2,...]
             print(loop_closure_frame_names)
