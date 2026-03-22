@@ -141,6 +141,7 @@ class GraphMap:
     def write_poses_to_file(self, file_name, graph, give_camera_mat=False, kitti_format=False):
         all_poses = self.get_all_cam_matricies(give_camera_mat=True, graph=graph)
         with open(file_name, "w") as f:
+            seen_timestamps = set()
 
             if self.rectifying_H_mats:
                 assert len(self.rectifying_H_mats) == len(all_poses), "Number of rectifying mats and number of poses do not match"
@@ -154,9 +155,18 @@ class GraphMap:
                 print(frame_ids)
                 for frame_index, frame_id in enumerate(frame_ids):
                     pose = all_poses[count]
+                    timestamp_info = frame_timestamp_infos[frame_index]
+                    timestamp_key = (
+                        timestamp_info_to_stem(timestamp_info)
+                        if timestamp_info is not None
+                        else f"{float(frame_id):.9f}"
+                    )
                     K, rotation_matrix, t, scale = decompose_camera(pose)
                     # print("Decomposed K:\n", K)
                     count += 1
+                    if timestamp_key in seen_timestamps:
+                        continue
+                    seen_timestamps.add(timestamp_key)
                     x, y, z = t
                     if kitti_format:
                         pose_matrix = np.eye(4)
@@ -168,7 +178,6 @@ class GraphMap:
                     else:
                         quaternion = R.from_matrix(rotation_matrix).as_quat() # x, y, z, w
                         values = [x, y, z, *quaternion]
-                        timestamp_info = frame_timestamp_infos[frame_index]
                         timestamp_str = (
                             timestamp_info_to_tum_string(timestamp_info)
                             if timestamp_info is not None
@@ -241,6 +250,7 @@ class GraphMap:
 
     def write_local_pointclouds(self, graph, output_dir):
         os.makedirs(output_dir, exist_ok=True)
+        seen_timestamps = set()
         for submap in self.ordered_submaps_by_key():
             if submap.get_lc_status():
                 continue
@@ -268,6 +278,9 @@ class GraphMap:
                     if timestamp_info is not None
                     else frame_id_to_timestamp_stem(frame_id)
                 )
+                if file_stem in seen_timestamps:
+                    continue
+                seen_timestamps.add(file_stem)
                 o3d.io.write_point_cloud(
                     os.path.join(output_dir, f"{file_stem}.pcd"),
                     pcd,
